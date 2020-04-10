@@ -1,23 +1,25 @@
 package ratelimit
 
 import (
+	"fmt"
+	"math"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
 type LockToken string
 
 type Manager struct {
-	id               int
-	name             string
-	limit            int
-	remaining        int
-	resetInSeconds   int
-	needResourceChan chan Resource
-	mux              sync.Mutex
-	resetTicker      *time.Ticker
-	lockedResources  map[LockToken]*Resource
-	closeChan        chan struct{}
+	id             int
+	name           string
+	limit          int
+	resetInSeconds int
+	resourceChan   chan *Resource
+	mux            sync.Mutex
+	resetTicker    *time.Ticker
+	closeChan      chan struct{}
+	needResource   int64
 }
 
 func (m *Manager) startPollingTask() {
@@ -33,133 +35,57 @@ func (m *Manager) startPollingTask() {
 	}()
 }
 
-func (m *Manager) ReleaseResource(r *Resource) error {
+func (m *Manager) ReleaseResource(r *Resource) {
+	err := r.unlock()
+
+	if err != nil {
+		fmt.Printf("error releasing resource %s", err.Error())
+	}
+
+	needResource := atomic.LoadInt64(&m.needResource)
+
+	if atomic.CompareAndSwapInt64(&m.needResource, needResource, int64(math.Max(float64(needResource-1), 0))) {
+		go acquireResource(m)
+	}
+}
+
+func acquireResource(m *Manager) {
 	m.mux.Lock()
-	defer m.mux.Unlock()
+	res, err := NewResource(m)
+	m.mux.Unlock()
 
-	// if _, ok := m.pool[r.ID]; !ok {
-	// 	return errors.New("cannot release resource, not in use.")
-	// }
-
-	// err := r.release()
-
-	// if err != nil {
-	// 	return err
-	// }
-
-	// // remove resource from pool
-	// delete(m.pool, r.ID)
-
-	// if atomic.LoadInt32(&m.needResource) > 0 {
-	// 	res := m.acquireResource()
-
-	// 	if res == nil {
-	// 		panic("could not retrieve resource from pool.")
-	// 	}
-
-	// 	atomic.AddInt32(&m.needResource, -1)
-
-	// 	if atomic.LoadInt32(&m.needResource) < 0 {
-	// 		panic("need resource cannot be less than zero")
-	// 	}
-
-	// 	// run a goroutine and add the resource to the resourceChan
-	// 	go func() {
-	// 		m.resourceChan <- res
-	// 	}()
-	// }
-
-	return nil
+	if err != nil {
+		atomic.AddInt64(&m.needResource, 1)
+	} else {
+		m.resourceChan <- res
+	}
 }
 
-// func (m *Manager) QueryFreeResource() (*Resource, error) {
-// 	// Attempt to get one from out of the current pool of existing rate limit resources
-// 	stmt, err := MySQL.Prepare(`
-// 		SELECT
-// 			r.id
-// 		FROM
-// 			` + "`rate_limit_resource`" + ` r
-// 		WHERE
-// 			r.lock_id IS NOT NULL
-// 		AND
-// 			r.name = ?
-// 		LIMIT 1;
-// 	`)
-
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	var id string
-// 	err = stmt.QueryRow(m.name).Scan(&id)
-
-// 	if err == sql.ErrNoRows {
-// 		return nil, nil
-// 	}
-
-// 	if err != nil {
-// 		return nil, err
-// 	}
-
-// 	return GetResourceByID(id)
-// }
-
-// tries to acquire a resource by first looking for any free / available
-// resources in the resource table, and if that fails then by creating
-// a new resource if the limit has not been exceeded.
-func (m *Manager) acquire() error {
-
-	// Try to query the resource pool first
-	// resource, err := NewResource(m)
-
-	// if err != nil {
-	// 	panic(err) // handle this
-	// }
-
-	// // exit if we can't get resource
-	// if resource == nil {
-	// 	return nil
-	// }
-
-	// // Lock the resource
-	// err = resource.lock()
-
-	// if err != nil {
-	// 	panic(err)
-	// }
-
-	// // Update the map of resource
-	// _, ok := m.resourceMap[resource.ID]
-
-	// if ok == true {
-	// 	panic("resource exists in pool")
-	// }
-
-	// m.resourceMap[resource.ID] = resource
-
-	// return resource
-	return nil
-}
-
-func (m *Manager) AcquireResource() Resource {
+func (m *Manager) AcquireResource() *Resource {
 	// request a resource to be put on the need resource chan
+	go acquireResource(m)
 
 	// wait for an available resource from the channel
-	res := <-m.needResourceChan
-
-	return res
+	return <-m.resourceChan
 }
 
 func (m *Manager) unlockExpiredResourceTask() {
 	// get all resource IDs that are expired
-	stmt, err := MySQL.Prepare(`SELECT r.id FROM rate_limit_resource r WHERE r.expires_at > ?;`)
+	stmt, err := MySQL.Prepare(`
+		SELECT
+			r.id
+		FROM
+			` + `rate_limit_resource` + ` r
+		WHERE
+			r.expires_at > ?;
+	`)
 
 	if err != nil {
 		panic(err.Error())
 	}
 
-	now := time.Now().UTC().Format("2006-01-02 15:04:05")
-	rows, err := stmt.Query(now)
+	// now := time.Now().UTC().Format("2006-01-02 15:04:05")
+	rows, err := stmt.Query(time.Now().UTC())
 
 	if err != nil {
 		panic(err.Error())
@@ -219,7 +145,7 @@ func initManager(name string) (*Manager, error) {
 		FROM 
 			` + "`rate_limit`" + ` r
 		WHERE 
-			r.name=?;
+			r.name = ?;
 	`)
 
 	if err != nil {
@@ -235,13 +161,13 @@ func initManager(name string) (*Manager, error) {
 	}
 
 	return &Manager{
-		id:               id,
-		name:             name,
-		limit:            limit,
-		resetInSeconds:   resetInSeconds,
-		resetTicker:      time.NewTicker(time.Second * 3),
-		closeChan:        make(chan struct{}),
-		needResourceChan: make(chan Resource),
-		lockedResources:  make(map[LockToken]*Resource),
+		id:             id,
+		name:           name,
+		limit:          limit,
+		resetInSeconds: resetInSeconds,
+		resetTicker:    time.NewTicker(time.Second * 3),
+		closeChan:      make(chan struct{}),
+		resourceChan:   make(chan *Resource),
+		needResource:   0,
 	}, nil
 }

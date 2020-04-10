@@ -1,6 +1,10 @@
 package ratelimit
 
-import "database/sql"
+import (
+	"database/sql"
+
+	_ "github.com/go-sql-driver/mysql"
+)
 
 var (
 	// MySQL client is the sql db handle

@@ -17,12 +17,13 @@ CREATE TABLE `rate_limit` (
 CREATE TABLE `rate_limit_resource` (
 	`id` INT NOT NULL AUTO_INCREMENT,
   `rate_limit_id` INT NOT NULL,
-	`lock_token` VARCHAR(255) UNIQUE,
 	`created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-	`expires_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+	`expires_at` DATETIME NOT NULL,
+	`is_expired` BOOLEAN DEFAULT false,
   `count` INT NOT NULL,
 	PRIMARY KEY (`id`),
 	INDEX (`expires_at`),
+	INDEX (`is_expired`),
   FOREIGN KEY (`rate_limit_id`)
 		REFERENCES rate_limit(`id`)
     ON DELETE CASCADE
@@ -31,13 +32,13 @@ CREATE TABLE `rate_limit_resource` (
 INSERT INTO 
 	`rate_limit` 
 	(
-		`name`, 
-		`limit`, 
+		`name`,
+		`limit`,
 		`reset_in_seconds`
-	) 
-VALUES 
+	)
+VALUES
 	(
-		'crawlera', 
-		20, 
+		'crawlera',
+		20,
 		600
 	);

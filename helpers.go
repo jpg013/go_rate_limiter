@@ -2,6 +2,6 @@ package ratelimit
 
 import "github.com/segmentio/ksuid"
 
-func GenKsuid() string {
+func genKsuid() string {
 	return ksuid.New().String()
 }

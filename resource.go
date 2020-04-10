@@ -93,7 +93,7 @@ func NewResource(m *Manager) (r *Resource, err error) {
 		1,
 		time.Now().UTC(),
 		time.Now().UTC().Add(duration),
-		GenKsuid(),
+		genKsuid(),
 		false,
 		m.limit,
 	)

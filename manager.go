@@ -2,23 +2,22 @@ package ratelimit
 
 import (
 	"fmt"
-	"math"
+	"log"
 	"sync"
 	"sync/atomic"
 	"time"
 )
-
-type LockToken string
 
 type Manager struct {
 	id             int
 	name           string
 	limit          int
 	resetInSeconds int
-	resourceChan   chan *Resource
+	tokenChan      chan LockToken
 	mux            sync.Mutex
 	resetTicker    *time.Ticker
 	closeChan      chan struct{}
+	resourcesInUse map[LockToken]*Resource
 	needResource   int64
 }
 
@@ -35,18 +34,35 @@ func (m *Manager) startPollingTask() {
 	}()
 }
 
-func (m *Manager) ReleaseResource(r *Resource) {
-	err := r.unlock()
+func (m *Manager) Release(token LockToken) {
+	m.mux.Lock()
+	r, ok := m.resourcesInUse[token]
+
+	if !ok {
+		log.Printf("unable to relase token %s - not in use", token)
+	}
+
+	err := unlockResource(r.ID)
 
 	if err != nil {
 		fmt.Printf("error releasing resource %s", err.Error())
 	}
 
+	// delete the resource from the map
+	delete(m.resourcesInUse, token)
+
 	needResource := atomic.LoadInt64(&m.needResource)
 
-	if atomic.CompareAndSwapInt64(&m.needResource, needResource, int64(math.Max(float64(needResource-1), 0))) {
-		go acquireResource(m)
+	if needResource > 0 {
+		if atomic.CompareAndSwapInt64(
+			&m.needResource,
+			needResource,
+			needResource-1,
+		) {
+			go acquireResource(m)
+		}
 	}
+	m.mux.Unlock()
 }
 
 func acquireResource(m *Manager) {
@@ -57,75 +73,35 @@ func acquireResource(m *Manager) {
 	if err != nil {
 		atomic.AddInt64(&m.needResource, 1)
 	} else {
-		m.resourceChan <- res
+		m.resourcesInUse[res.Token] = res
+		m.tokenChan <- res.Token
 	}
 }
 
-func (m *Manager) AcquireResource() *Resource {
+func (m *Manager) Acquire() LockToken {
 	// request a resource to be put on the need resource chan
 	go acquireResource(m)
 
 	// wait for an available resource from the channel
-	return <-m.resourceChan
+	return <-m.tokenChan
 }
 
 func (m *Manager) unlockExpiredResourceTask() {
-	// get all resource IDs that are expired
-	stmt, err := MySQL.Prepare(`
-		SELECT
-			r.id
-		FROM
-			` + `rate_limit_resource` + ` r
-		WHERE
-			r.expires_at > ?;
-	`)
+	m.mux.Lock()
 
-	if err != nil {
-		panic(err.Error())
-	}
-
-	// now := time.Now().UTC().Format("2006-01-02 15:04:05")
-	rows, err := stmt.Query(time.Now().UTC())
-
-	if err != nil {
-		panic(err.Error())
-	}
-
-	ids := make([]string, 0)
-
-	for rows.Next() {
-		var resourceID string
-		err := rows.Scan(&resourceID)
-		if err != nil {
-			panic(err.Error())
-		}
-		ids = append(ids, resourceID)
-	}
-
-	// Loop through each resource and check if expired
-	for _, id := range ids {
-		stmt, err := MySQL.Prepare(`DELETE FROM rate_limit_resource WHERE id=?;`)
-		if err != nil {
-			panic(err.Error())
-		}
-		results, err := stmt.Exec(id)
-		if err != nil {
-			panic(err.Error())
-		}
-		affectedCount, err := results.RowsAffected()
-		if err != nil {
-			panic(err.Error())
-		}
-		if affectedCount != 1 {
-			panic("could not delete expired resource")
+	for token, r := range m.resourcesInUse {
+		if r.ExpiresAt.Before(time.Now().UTC()) {
+			m.Release(token)
 		}
 	}
+
+	m.mux.Unlock()
 }
 
 func NewManager(name string) (*Manager, error) {
 	// Init the manager
 	m, err := initManager(name)
-
+	fmt.Println(m.resourcesInUse)
 	if err != nil {
 		return m, err
 	}
@@ -133,6 +109,60 @@ func NewManager(name string) (*Manager, error) {
 	m.startPollingTask()
 
 	return m, nil
+}
+
+func syncResourceInUseState(m *Manager) error {
+	m.mux.Lock()
+
+	// Load all resources in use from database
+	stmt, err := MySQL.Prepare(`
+		SELECT
+			r.id
+		FROM 
+			` + "`rate_limit_resource`" + ` r
+		WHERE 
+			r.rate_limit_id = ?
+		AND
+			r.is_expired = false;
+	`)
+
+	if err != nil {
+		return err
+	}
+
+	sqlRows, err := stmt.Query(m.id)
+
+	if err != nil {
+		return err
+	}
+
+	ids := make([]int64, 0)
+
+	for sqlRows.Next() {
+		var id int64
+		err = sqlRows.Scan(&id)
+		if err != nil {
+			return err
+		}
+		ids = append(ids, id)
+	}
+
+	// Reset the resource in Use map
+	m.resourcesInUse = make(map[LockToken]*Resource)
+
+	for _, id := range ids {
+		res, err := getResourceByID(id)
+
+		if err != nil {
+			return nil
+		}
+
+		m.resourcesInUse[res.Token] = res
+	}
+
+	m.mux.Unlock()
+
+	return nil
 }
 
 func initManager(name string) (*Manager, error) {
@@ -160,14 +190,17 @@ func initManager(name string) (*Manager, error) {
 		return nil, err
 	}
 
-	return &Manager{
+	m := &Manager{
 		id:             id,
 		name:           name,
 		limit:          limit,
 		resetInSeconds: resetInSeconds,
 		resetTicker:    time.NewTicker(time.Second * 3),
 		closeChan:      make(chan struct{}),
-		resourceChan:   make(chan *Resource),
+		tokenChan:      make(chan LockToken),
+		resourcesInUse: make(map[LockToken]*Resource),
 		needResource:   0,
-	}, nil
+	}
+
+	return m, syncResourceInUseState(m)
 }

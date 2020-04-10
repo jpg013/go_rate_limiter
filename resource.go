@@ -6,6 +6,8 @@ import (
 	"time"
 )
 
+type LockToken string
+
 // Resource represents a rate limit resource
 type Resource struct {
 	ID        int
@@ -13,10 +15,11 @@ type Resource struct {
 	CreatedAt time.Time
 	Count     int
 	ExpiresAt time.Time
+	Token     LockToken
 	IsExpired bool
 }
 
-func (r *Resource) unlock() error {
+func unlockResource(id int) error {
 	stmt, err := MySQL.Prepare(`
 		UPDATE
 			` + "`rate_limit_resource`" + `
@@ -32,7 +35,7 @@ func (r *Resource) unlock() error {
 		panic(err)
 	}
 
-	result, err := stmt.Exec(r.ID)
+	result, err := stmt.Exec(id)
 
 	if err != nil {
 		return err
@@ -61,10 +64,11 @@ func NewResource(m *Manager) (r *Resource, err error) {
 				count,
 				created_at,
 				expires_at,
+				token,
 				is_expired
 			)
 		SELECT
-			?, ?, ?, ?, ? FROM dual
+			?, ?, ?, ?, ?, ? FROM dual
 		WHERE
 			(
 				SELECT COUNT(*)
@@ -86,6 +90,7 @@ func NewResource(m *Manager) (r *Resource, err error) {
 		1,
 		time.Now().UTC(),
 		time.Now().UTC().Add(duration),
+		GenKsuid(),
 		false,
 		m.limit,
 	)
@@ -116,6 +121,7 @@ func getResourceByID(rowID int64) (*Resource, error) {
 			r.count,
 			r.created_at,
 			r.expires_at,
+			r.token,
 			r.is_expired
 		FROM
 			` + "`rate_limit_resource`" + ` r
@@ -134,6 +140,7 @@ func sqlRowToResource(row *sql.Row) (r *Resource, err error) {
 	var createdDatetime, expiresDatetime, name string
 	var count, id, rateLimitID int
 	var isExpired bool
+	var token LockToken
 
 	err = row.Scan(
 		&id,
@@ -141,6 +148,7 @@ func sqlRowToResource(row *sql.Row) (r *Resource, err error) {
 		&count,
 		&createdDatetime,
 		&expiresDatetime,
+		&token,
 		&isExpired,
 	)
 
@@ -168,6 +176,7 @@ func sqlRowToResource(row *sql.Row) (r *Resource, err error) {
 		Count:     count,
 		CreatedAt: createdAt,
 		ExpiresAt: expiresAt,
+		Token:     token,
 		IsExpired: isExpired,
 	}, nil
 }

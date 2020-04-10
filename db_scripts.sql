@@ -20,6 +20,7 @@ CREATE TABLE `rate_limit_resource` (
 	`created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	`expires_at` DATETIME NOT NULL,
 	`is_expired` BOOLEAN DEFAULT false,
+	`token` VARCHAR(255) NOT NULL,
   `count` INT NOT NULL,
 	PRIMARY KEY (`id`),
 	INDEX (`expires_at`),

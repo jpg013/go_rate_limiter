@@ -20,20 +20,22 @@ func main() {
 	rand.Seed(time.Now().UnixNano())
 
 	doWork := func(id int) {
-		res := m.AcquireResource()
-		n := rand.Intn(10)
+		token := m.Acquire()
+		n := rand.Intn(5)
 		fmt.Printf("Worker %d Sleeping %d seconds...\n", id, n)
 		time.Sleep(time.Duration(n) * time.Second)
 		fmt.Printf("Worker %d Done\n", id)
 		// release the resource
-		m.ReleaseResource(res)
+		m.Release(token)
 		wg.Done()
 	}
 
-	for i := 0; i < 30; i++ {
+	for i := 0; i < 1000; i++ {
 		wg.Add(1)
 		go doWork(i)
 	}
 
 	wg.Wait()
+
+	time.Sleep(10 * time.Second)
 }

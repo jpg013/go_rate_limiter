@@ -6,7 +6,8 @@ import (
 	"time"
 )
 
-type LockToken string
+// ResourceToken represents a token associated with a resource
+type ResourceToken string
 
 // Resource represents a rate limit resource
 type Resource struct {
@@ -15,10 +16,12 @@ type Resource struct {
 	CreatedAt time.Time
 	Count     int
 	ExpiresAt time.Time
-	Token     LockToken
+	Token     ResourceToken
 	IsExpired bool
 }
 
+// sets the is_expired flag on the resource in the database or
+// returns error if unable
 func unlockResource(id int) error {
 	stmt, err := MySQL.Prepare(`
 		UPDATE
@@ -113,6 +116,7 @@ func NewResource(m *Manager) (r *Resource, err error) {
 	return getResourceByID(insertedID)
 }
 
+// queries resource table by id and returns if found
 func getResourceByID(rowID int64) (*Resource, error) {
 	stmt, err := MySQL.Prepare(`
 		SELECT
@@ -136,11 +140,12 @@ func getResourceByID(rowID int64) (*Resource, error) {
 	return sqlRowToResource(stmt.QueryRow(rowID))
 }
 
+// helper function that takes a resource sql row and transforms it into a resource
 func sqlRowToResource(row *sql.Row) (r *Resource, err error) {
 	var createdDatetime, expiresDatetime, name string
 	var count, id, rateLimitID int
 	var isExpired bool
-	var token LockToken
+	var token ResourceToken
 
 	err = row.Scan(
 		&id,

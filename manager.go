@@ -8,19 +8,22 @@ import (
 	"time"
 )
 
+// Manager represents a rate limit manager
 type Manager struct {
 	id             int
 	name           string
 	limit          int
 	resetInSeconds int
-	tokenChan      chan LockToken
+	tokenChan      chan ResourceToken
 	mux            sync.Mutex
 	resetTicker    *time.Ticker
 	closeChan      chan struct{}
-	resourcesInUse map[LockToken]*Resource
+	resourcesInUse map[ResourceToken]*Resource
 	needResource   int64
 }
 
+// polling task that listens for reset ticker channel
+// and runs the unlockExpiredResourceTask
 func (m *Manager) startPollingTask() {
 	go func() {
 		for {
@@ -34,7 +37,10 @@ func (m *Manager) startPollingTask() {
 	}()
 }
 
-func (m *Manager) Release(token LockToken) {
+// Release takes a resource token and expires the resource
+// and removes it from the inUse map. If there are pending needed resources
+// then it will run acquire resource.
+func (m *Manager) Release(token ResourceToken) {
 	m.mux.Lock()
 	r, ok := m.resourcesInUse[token]
 
@@ -42,6 +48,7 @@ func (m *Manager) Release(token LockToken) {
 		log.Printf("unable to relase token %s - not in use", token)
 	}
 
+	// Unlock the resource
 	err := unlockResource(r.ID)
 
 	if err != nil {
@@ -53,6 +60,7 @@ func (m *Manager) Release(token LockToken) {
 
 	needResource := atomic.LoadInt64(&m.needResource)
 
+	// If we needResource, then call acquire resource
 	if needResource > 0 {
 		if atomic.CompareAndSwapInt64(
 			&m.needResource,
@@ -78,7 +86,8 @@ func acquireResource(m *Manager) {
 	}
 }
 
-func (m *Manager) Acquire() LockToken {
+// Acquire is called to receive a ResourceToken
+func (m *Manager) Acquire() ResourceToken {
 	// request a resource to be put on the need resource chan
 	go acquireResource(m)
 
@@ -98,6 +107,7 @@ func (m *Manager) unlockExpiredResourceTask() {
 	m.mux.Unlock()
 }
 
+// NewManager is called with rate limit name to create a new manager instance
 func NewManager(name string) (*Manager, error) {
 	// Init the manager
 	m, err := initManager(name)
@@ -148,7 +158,7 @@ func syncResourceInUseState(m *Manager) error {
 	}
 
 	// Reset the resource in Use map
-	m.resourcesInUse = make(map[LockToken]*Resource)
+	m.resourcesInUse = make(map[ResourceToken]*Resource)
 
 	for _, id := range ids {
 		res, err := getResourceByID(id)
@@ -197,8 +207,8 @@ func initManager(name string) (*Manager, error) {
 		resetInSeconds: resetInSeconds,
 		resetTicker:    time.NewTicker(time.Second * 3),
 		closeChan:      make(chan struct{}),
-		tokenChan:      make(chan LockToken),
-		resourcesInUse: make(map[LockToken]*Resource),
+		tokenChan:      make(chan ResourceToken),
+		resourcesInUse: make(map[ResourceToken]*Resource),
 		needResource:   0,
 	}
 

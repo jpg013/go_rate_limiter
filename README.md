@@ -15,10 +15,10 @@ func main() {
 	rand.Seed(time.Now().UnixNano())
 
 	doWork := func(id int) {
-    // Acquire a resource token
-    token := m.Acquire()
-    // Simulate some work for some random time 
-    n := rand.Intn(5)
+    		// Acquire a resource token
+    		token := m.Acquire()
+    		// Simulate some work for some random time 
+    		n := rand.Intn(5)
 		fmt.Printf("Worker %d Sleeping %d seconds...\n", id, n)
 		time.Sleep(time.Duration(n) * time.Second)
 		fmt.Printf("Worker %d Done\n", id)
@@ -33,7 +33,5 @@ func main() {
 	}
 
 	wg.Wait()
-
-	time.Sleep(10 * time.Second)
 }
 ```

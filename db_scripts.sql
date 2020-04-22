@@ -15,16 +15,15 @@ CREATE TABLE `rate_limit` (
 
 -- CREATE RATE LIMIT RESOURCE
 CREATE TABLE `rate_limit_resource` (
-	`id` INT NOT NULL AUTO_INCREMENT,
+	`token` VARCHAR(255) NOT NULL,
   `rate_limit_id` INT NOT NULL,
 	`created_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
 	`expires_at` DATETIME NOT NULL,
-	`is_expired` BOOLEAN DEFAULT false,
-	`token` VARCHAR(255) NOT NULL,
+	`in_use` BOOLEAN DEFAULT false,
   `count` INT NOT NULL,
-	PRIMARY KEY (`id`),
+	PRIMARY KEY (`token`),
 	INDEX (`expires_at`),
-	INDEX (`is_expired`),
+	INDEX (`in_use`),
   FOREIGN KEY (`rate_limit_id`)
 		REFERENCES rate_limit(`id`)
     ON DELETE CASCADE

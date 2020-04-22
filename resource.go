@@ -1,9 +1,10 @@
 package ratelimit
 
 import (
-	"database/sql"
 	"errors"
 	"time"
+
+	"github.com/segmentio/ksuid"
 )
 
 // ResourceToken represents a token associated with a resource
@@ -11,34 +12,37 @@ type ResourceToken string
 
 // Resource represents a rate limit resource
 type Resource struct {
-	ID        int
-	Name      string
-	CreatedAt time.Time
-	Count     int
-	ExpiresAt time.Time
-	Token     ResourceToken
-	IsExpired bool
+	Token       ResourceToken
+	RateLimitID int
+	CreatedAt   time.Time
+	Count       int
+	ExpiresAt   time.Time
+	InUse       bool
 }
 
-// sets the is_expired flag on the resource in the database or
+func genToken() ResourceToken {
+	return ResourceToken(ksuid.New().String())
+}
+
+// sets the in_use flag to true on the resource in the database or
 // returns error if unable
-func unlockResource(id int) error {
+func unlockResource(token ResourceToken) error {
 	stmt, err := MySQL.Prepare(`
 		UPDATE
 			` + "`rate_limit_resource`" + `
 		SET
-			` + "`is_expired`" + ` = true
+			` + "`in_use`" + ` = false
 		WHERE
-			` + "`id`" + ` = ?
+			` + "`token`" + ` = ?
 		AND
-			` + "`is_expired`" + ` = false;
+			` + "`in_use`" + ` = true;
 	`)
 
 	if err != nil {
 		panic(err)
 	}
 
-	result, err := stmt.Exec(id)
+	result, err := stmt.Exec(token)
 
 	if err != nil {
 		return err
@@ -63,12 +67,12 @@ func NewResource(m *Manager) (r *Resource, err error) {
 	stmt, err := MySQL.Prepare(`
 		INSERT INTO rate_limit_resource
 			(
+				token,
 				rate_limit_id,
 				count,
 				created_at,
 				expires_at,
-				token,
-				is_expired
+				in_use
 			)
 		SELECT
 			?, ?, ?, ?, ?, ? FROM dual
@@ -78,7 +82,7 @@ func NewResource(m *Manager) (r *Resource, err error) {
 				FROM
 					` + `rate_limit_resource` + `
 				WHERE
-					is_expired = false
+					in_use = true
 			) <= ?;
 	`)
 
@@ -88,13 +92,20 @@ func NewResource(m *Manager) (r *Resource, err error) {
 
 	// duration before lock expires
 	duration := time.Second * time.Duration(m.resetInSeconds)
+	// generate a new lock token
+	token := genToken()
+	// default count to 1
+	count := 1
+	// default inUse to true
+	inUse := true
+
 	results, err := stmt.Exec(
+		token,
 		m.id,
-		1,
+		count,
 		time.Now().UTC(),
 		time.Now().UTC().Add(duration),
-		genKsuid(),
-		false,
+		inUse,
 		m.limit,
 	)
 
@@ -102,86 +113,161 @@ func NewResource(m *Manager) (r *Resource, err error) {
 		return r, err
 	}
 
-	insertedID, err := results.LastInsertId()
+	affecedCount, err := results.RowsAffected()
 
 	if err != nil {
 		return r, err
 	}
 
 	// Were we able to insert a new resource record?
-	if insertedID == 0 {
+	if affecedCount == 0 {
 		return r, errors.New("unable to insert rate limit resource")
 	}
 
-	return getResourceByID(insertedID)
+	return getResourceByToken(token)
 }
 
 // queries resource table by id and returns if found
-func getResourceByID(rowID int64) (*Resource, error) {
+func getResourceByToken(t ResourceToken) (r *Resource, err error) {
 	stmt, err := MySQL.Prepare(`
 		SELECT
-			r.id,
+			r.token,
 			r.rate_limit_id,
 			r.count,
 			r.created_at,
 			r.expires_at,
-			r.token,
-			r.is_expired
+			r.in_use
 		FROM
 			` + "`rate_limit_resource`" + ` r
 		WHERE
-			r.id = ?;
+			r.token = ?;
 	`)
 
 	if err != nil {
-		return nil, err
+		return r, err
 	}
 
-	return sqlRowToResource(stmt.QueryRow(rowID))
-}
+	sqlRow := stmt.QueryRow(string(t))
 
-// helper function that takes a resource sql row and transforms it into a resource
-func sqlRowToResource(row *sql.Row) (r *Resource, err error) {
-	var createdDatetime, expiresDatetime, name string
-	var count, id, rateLimitID int
-	var isExpired bool
+	var created, expires string
+	var count, rateLimitID int
+	var inUse bool
 	var token ResourceToken
 
-	err = row.Scan(
-		&id,
+	err = sqlRow.Scan(
+		&token,
 		&rateLimitID,
 		&count,
-		&createdDatetime,
-		&expiresDatetime,
-		&token,
-		&isExpired,
+		&created,
+		&expires,
+		&inUse,
 	)
 
 	if err != nil {
 		return r, err
 	}
 
+	return makeResourceFromSQL(
+		token,
+		rateLimitID,
+		count,
+		created,
+		expires,
+		inUse,
+	)
+}
+
+func getResourcesInUse(rateLimitID int) (res []*Resource, err error) {
+	// Load all resources in use from database
+	stmt, err := MySQL.Prepare(`
+		SELECT
+			r.token,
+			r.rate_limit_id,
+			r.count,
+			r.created_at,
+			r.expires_at,
+			r.in_use
+		FROM 
+			` + "`rate_limit_resource`" + ` r
+		WHERE 
+			r.rate_limit_id = ?
+		AND
+			r.in_use = true;
+	`)
+
 	if err != nil {
-		return r, err
+		panic(err)
 	}
 
-	createdAt, err := time.Parse("2006-01-02 15:04:05", createdDatetime)
+	sqlRows, err := stmt.Query(rateLimitID)
+
+	if err != nil {
+		return res, err
+	}
+
+	res = make([]*Resource, 0)
+
+	for sqlRows.Next() {
+		var created, expires string
+		var count, rateLimitID int
+		var inUse bool
+		var token ResourceToken
+
+		err = sqlRows.Scan(
+			&token,
+			&rateLimitID,
+			&count,
+			&created,
+			&expires,
+			&inUse,
+		)
+
+		if err != nil {
+			return res, err
+		}
+
+		r, err := makeResourceFromSQL(
+			token,
+			rateLimitID,
+			count,
+			created,
+			expires,
+			inUse,
+		)
+
+		if err != nil {
+			return res, err
+		}
+
+		res = append(res, r)
+	}
+
+	return res, err
+}
+
+func makeResourceFromSQL(
+	token ResourceToken,
+	rateLimitID int,
+	count int,
+	created string,
+	expires string,
+	inUse bool) (r *Resource, err error) {
+	createdAt, err := time.Parse("2006-01-02 15:04:05", created)
 	if err != nil {
 		return nil, err
 	}
 
-	expiresAt, err := time.Parse("2006-01-02 15:04:05", expiresDatetime)
+	expiresAt, err := time.Parse("2006-01-02 15:04:05", expires)
 	if err != nil {
 		return nil, err
 	}
 
 	return &Resource{
-		ID:        id,
-		Name:      name,
-		Count:     count,
-		CreatedAt: createdAt,
-		ExpiresAt: expiresAt,
-		Token:     token,
-		IsExpired: isExpired,
+		Token:       token,
+		RateLimitID: rateLimitID,
+		Count:       count,
+		CreatedAt:   createdAt,
+		ExpiresAt:   expiresAt,
+		InUse:       inUse,
 	}, nil
 }

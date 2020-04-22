@@ -20,7 +20,9 @@ func main() {
 	rand.Seed(time.Now().UnixNano())
 
 	doWork := func(id int) {
+		// Acquire a rate limit token
 		token := m.Acquire()
+		// Simulate some work
 		n := rand.Intn(5)
 		fmt.Printf("Worker %d Sleeping %d seconds...\n", id, n)
 		time.Sleep(time.Duration(n) * time.Second)
@@ -30,12 +32,12 @@ func main() {
 		wg.Done()
 	}
 
+	// Spin up a 1000 workers that need a rate limit resource
 	for i := 0; i < 1000; i++ {
 		wg.Add(1)
 		go doWork(i)
 	}
 
+	// Wait for all workers to finish
 	wg.Wait()
-
-	time.Sleep(10 * time.Second)
 }

@@ -16,6 +16,7 @@ type Manager struct {
 	limit          int
 	resetInSeconds int
 	tokenChan      chan ResourceToken
+	releaseChan    chan ResourceToken
 	mux            sync.Mutex
 	resetTicker    *time.Ticker
 	closeChan      chan struct{}
@@ -23,26 +24,7 @@ type Manager struct {
 	needResource   int64
 }
 
-// polling task that listens for reset ticker channel
-// and runs the unlockExpiredResourceTask
-func (m *Manager) startPollingTask() {
-	go func() {
-		for {
-			select {
-			case <-m.resetTicker.C:
-				m.unlockExpiredResourceTask()
-			case <-m.closeChan:
-				break
-			}
-		}
-	}()
-}
-
-// Release takes a resource token and expires the resource
-// and removes it from the inUse map. If there are pending needed resources
-// then it will run acquire resource.
-func (m *Manager) Release(token ResourceToken) {
-	m.mux.Lock()
+func releaseToken(m *Manager, token ResourceToken) {
 	r, ok := m.resourcesInUse[token]
 
 	if !ok {
@@ -59,10 +41,17 @@ func (m *Manager) Release(token ResourceToken) {
 	// delete the resource from the map
 	delete(m.resourcesInUse, token)
 
-	m.mux.Unlock()
-
 	// Call to process next needed resource
-	go needNextResource(m)
+	needNextResource(m)
+}
+
+// Release takes a resource token and expires the resource
+// and removes it from the inUse map. If there are pending needed resources
+// then it will run acquire resource.
+func (m *Manager) Release(tokenStr string) {
+	go func() {
+		m.releaseChan <- ResourceToken(tokenStr)
+	}()
 }
 
 func needNextResource(m *Manager) {
@@ -80,7 +69,7 @@ func needNextResource(m *Manager) {
 		needResource,
 		needResource-1,
 	) {
-		tryAcquireResource(m)
+		go tryAcquireResource(m)
 	}
 }
 
@@ -125,24 +114,53 @@ func tryAcquireResource(m *Manager) (err error) {
 }
 
 // Acquire is called to receive a ResourceToken
-func (m *Manager) Acquire() ResourceToken {
+func (m *Manager) Acquire() string {
 	// request a resource to be put on the need resource chan
 	tryAcquireResource(m)
 
 	// wait for an available resource from the channel
-	return <-m.tokenChan
+	t := <-m.tokenChan
+
+	return string(t)
 }
 
 func (m *Manager) unlockExpiredResourceTask() {
-	m.mux.Lock()
-
 	for token, r := range m.resourcesInUse {
 		if r.ExpiresAt.Before(time.Now().UTC()) {
-			m.Release(token)
+			go func(t ResourceToken) {
+				m.releaseChan <- t
+			}(token)
 		}
 	}
+}
 
-	m.mux.Unlock()
+// polling that that checks for expired resources and
+// forcefully releases them from use.
+func (m *Manager) startPollingExpiredTask() {
+	go func() {
+		for {
+			select {
+			case <-m.resetTicker.C:
+				m.unlockExpiredResourceTask()
+			case <-m.closeChan:
+				break
+			}
+		}
+	}()
+}
+
+// list to release channel and release tokens.
+func (m *Manager) startReceivingReleaseChan() {
+	go func() {
+		for {
+			select {
+			case token := <-m.releaseChan:
+				releaseToken(m, token)
+			case <-m.closeChan:
+				break
+			}
+		}
+	}()
 }
 
 // NewManager is called with rate limit name to create a new manager instance
@@ -154,14 +172,18 @@ func NewManager(name string) (*Manager, error) {
 		return m, err
 	}
 
-	m.startPollingTask()
+	// start task to check expired resources
+	m.startPollingExpiredTask()
+
+	// start receiving messages on the release chan
+	m.startReceivingReleaseChan()
 
 	return m, nil
 }
 
+// syncResourceInUseState should be called when the manager is initialized
+// to sync the database resource state with the manager.
 func syncResourceInUseState(m *Manager) error {
-	m.mux.Lock()
-
 	res, err := getResourcesInUse(m.id)
 
 	if err != nil {
@@ -174,8 +196,6 @@ func syncResourceInUseState(m *Manager) error {
 	for _, r := range res {
 		m.resourcesInUse[r.Token] = r
 	}
-
-	m.mux.Unlock()
 
 	return nil
 }
@@ -212,10 +232,11 @@ func initManager(name string) (*Manager, error) {
 		resetInSeconds: resetInSeconds,
 		resetTicker:    time.NewTicker(time.Second * 3),
 		closeChan:      make(chan struct{}),
+		releaseChan:    make(chan ResourceToken),
 		tokenChan:      make(chan ResourceToken),
-		resourcesInUse: make(map[ResourceToken]*Resource),
 		needResource:   0,
 	}
 
+	// sync the database resource state
 	return m, syncResourceInUseState(m)
 }

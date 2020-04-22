@@ -40,4 +40,7 @@ func main() {
 
 	// Wait for all workers to finish
 	wg.Wait()
+
+	// Allow 1 second for all rate limits to release
+	time.Sleep(1 * time.Second)
 }

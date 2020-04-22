@@ -28,17 +28,23 @@ func (s *Server) HandleReleaseRateLimit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if type, ok := body["rate_limit_type"]; !ok {
+	rateLimitType, ok := body["rate_limit_type"]
+
+	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	if token, ok := body["token"]; !ok {
+	token, ok := body["token"]
+
+	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	if manager, ok := s.rateLimitManagers[type]; !ok {
+	manager, ok := s.rateLimitManagers[rateLimitType]
+
+	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -59,12 +65,16 @@ func (s *Server) HandleAcquireRateLimit(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if type, ok := body["rate_limit_type"]; !ok {
+	rateLimitType, ok := body["rate_limit_type"]
+
+	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
 
-	if manager, ok := s.rateLimitManagers[type]; !ok {
+	manager, ok := s.rateLimitManagers[rateLimitType]
+
+	if !ok {
 		w.WriteHeader(http.StatusBadRequest)
 		return
 	}
@@ -91,7 +101,7 @@ func main() {
 	}
 
 	// init each rate limiter
-	for _, n := range rateLimitTypes {
+	for _, n := range rateLimiterTypes {
 		m, err := ratelimit.NewManager(n)
 
 		if err != nil {

@@ -29,6 +29,7 @@ func releaseToken(m *Manager, token ResourceToken) {
 
 	if !ok {
 		log.Printf("unable to relase token %s - not in use", token)
+		return
 	}
 
 	// Unlock the resource

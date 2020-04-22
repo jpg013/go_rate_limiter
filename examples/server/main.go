@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"log"
+	"math/rand"
 	"net/http"
+	"time"
 
 	"github.com/gorilla/mux"
 	"github.com/jpg013/ratelimit"
@@ -95,6 +99,81 @@ func (s *Server) HandleAcquireRateLimit(w http.ResponseWriter, r *http.Request) 
 	w.Write(jsonBytes)
 }
 
+func fireRequests() {
+	doWork := func(id int) {
+		// Simulate some work
+		n := rand.Intn(5)
+		fmt.Printf("Worker %d Sleeping %d seconds...\n", id, n)
+		time.Sleep(time.Duration(n) * time.Second)
+		fmt.Printf("Worker %d Done\n", id)
+	}
+
+	acquireToken := func() string {
+		requestBody, err := json.Marshal(map[string]string{
+			"rate_limit_type": "crawlera",
+		})
+
+		if err != nil {
+			panic(err)
+		}
+
+		resp, err := http.Post("http://localhost:8080/acquire_rate_limit", "application/json", bytes.NewBuffer(requestBody))
+
+		if err != nil {
+			panic(err)
+		}
+
+		defer resp.Body.Close()
+
+		var respBody map[string]string
+
+		err = json.NewDecoder(resp.Body).Decode(&respBody)
+
+		if err != nil {
+			panic(err)
+		}
+
+		token, ok := respBody["token"]
+
+		if !ok {
+			panic("invalid token")
+		}
+
+		return token
+	}
+
+	releaseToken := func(token string) {
+		requestBody, err := json.Marshal(map[string]string{
+			"rate_limit_type": "crawlera",
+			"token":           token,
+		})
+
+		if err != nil {
+			panic(err)
+		}
+
+		resp, err := http.Post("http://localhost:8080/release_rate_limit", "application/json", bytes.NewBuffer(requestBody))
+
+		if err != nil {
+			panic(err)
+		}
+
+		defer resp.Body.Close()
+
+		if resp.StatusCode != 200 {
+			panic("Error releasing token")
+		}
+	}
+
+	for i := 0; i < 100; i++ {
+		go func(id int) {
+			token := acquireToken()
+			doWork(id)
+			releaseToken(token)
+		}(i)
+	}
+}
+
 func main() {
 	server := Server{
 		rateLimitManagers: make(map[string]*ratelimit.Manager),
@@ -113,7 +192,9 @@ func main() {
 
 	r := mux.NewRouter()
 	r.HandleFunc("/acquire_rate_limit", server.HandleAcquireRateLimit).Methods(http.MethodPost)
-	r.HandleFunc("/release_rate_limit", server.HandleReleaseRateLimit).Methods(http.MethodDelete)
+	r.HandleFunc("/release_rate_limit", server.HandleReleaseRateLimit).Methods(http.MethodPost)
+
+	go fireRequests()
 
 	if err := http.ListenAndServe(":8080", r); err != nil {
 		log.Fatal(err)

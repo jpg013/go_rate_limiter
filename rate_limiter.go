@@ -1,6 +1,8 @@
 package ratelimiter
 
 import (
+	"log"
+	"sync/atomic"
 	"time"
 )
 
@@ -13,8 +15,8 @@ type RateLimiterType uint32
 
 const (
 	ThrottleType RateLimiterType = iota + 1
-	MaxConcurrencyType
-	IntervalWindowType
+	ConcurrencyType
+	IntervalType
 )
 
 func New(conf *Config) (RateLimiter, error) {
@@ -27,6 +29,8 @@ func New(conf *Config) (RateLimiter, error) {
 	switch conf.Type {
 	case ThrottleType:
 		err = withThrottle(m, conf)
+	case ConcurrencyType:
+		err = withMaxConcurrency(m, conf)
 	default:
 		err = ErrInvalidLimiterType
 	}
@@ -39,113 +43,111 @@ func New(conf *Config) (RateLimiter, error) {
 }
 
 type Config struct {
-	Type            RateLimiterType
-	Throttle        time.Duration
-	ConnectionLimit int
+	Type           RateLimiterType
+	Throttle       time.Duration
+	MaxConcurrency int
 }
 
-// func NewMaxConcurrencyRateLimiter(conf *Config) (RateLimiter, error) {
-// 	m, err := NewManager()
-
-// 	if err != nil {
-// 		return m, err
-// 	}
-
-// 	return withMaxConcurrency(m, conf)
-// }
-
-// func withMaxConcurrency(m *Manager, conf *Config) (*Manager, error) {
-// 	if m.rateLimiterType != UndefinedRateLimiterType {
-// 		return m, ErrAleadyInitialized
-// 	}
-
-// 	m.rateLimiterType = MaxConcurrencyType
-// 	m.limit = conf.limit
-
-// 	go func() {
-// 		var wg sync.WaitGroup
-
-// 		// Listen on the in channel
-// 		for {
-// 			select {
-// 			case <-inChan:
-// 				wg.Add(1)
-// 				// Try to get a remaining rateLimit
-// 				err := tryGetRemaining(m)
-
-// 				if err == nil {
-// 					t, err := NewType()
-
-// 					if err != nil {
-// 						m.errorChan <- err
-// 					} else {
-// 						outChan <- t
-// 					}
-// 				} else {
-
-// 				}
-// 			}
-// 		}
-
-// 		defer func() {
-// 			wg.Wait()
-// 			fmt.Println("close out channel")
-// 		}()
-// 	}()
-
-// 	return m, nil
-// }
-
-// func requestToken(m *Manager) {
-// 	m.lock.Lock()
-// 	defer m.lock.Unlock()
-
-// 	// If the number of rate limits in use are less than limit, create a new one
-// 	if len(m.tokensInUse) >= m.limit {
-// 		m.needToken++
-// 		return
-// 	}
-
-// 	t, err := NewType()
-
-// 	if err != nil {
-// 		m.errorChan <- err
-// 	} else {
-// 		m.tokensInUse[t.Token] = t
-// 		m.outChan <- t.Token
-// 	}
-// }
-
 func withThrottle(m *Manager, conf *Config) error {
-	if m.await != nil {
-		return ErrRateLimiterInitialized
-	}
-
-	throttler := make(chan struct{})
-
 	go func() {
 		ticker := time.NewTicker(conf.Throttle)
 
 		for ; true; <-ticker.C {
-			throttler <- struct{}{}
+			<-m.inChan
+			// Generate Token
+			m.generateToken()
 		}
 	}()
 
-	// define the await function
-	m.await = func() (<-chan *Token, <-chan error) {
-		go func() {
-			<-throttler
-			t, err := NewToken()
+	return nil
+}
 
-			if err != nil {
-				m.errorChan <- err
-			} else {
-				m.outChan <- t
+func withMaxConcurrency(m *Manager, conf *Config) error {
+	limit := conf.MaxConcurrency
+
+	go func() {
+		for {
+			select {
+			case <-m.inChan:
+				if atomic.LoadInt64(&m.awaiting) > 0 {
+					atomic.AddInt64(&m.awaiting, 1)
+					continue
+				}
+				if len(m.activeTokens) >= limit {
+					atomic.AddInt64(&m.awaiting, 1)
+					continue
+				}
+				m.generateToken()
+			case t := <-m.releaseChan:
+				if t == nil {
+					log.Print("unable to relase nil token")
+					continue
+				}
+				if _, ok := m.activeTokens[t.ID]; !ok {
+					log.Printf("unable to relase token %s - not in use", t)
+					continue
+				}
+				// Delete from map
+				delete(m.activeTokens, t.ID)
+
+				// Is anything waiting for a rate limit?
+				if atomic.LoadInt64(&m.awaiting) > 0 {
+					atomic.AddInt64(&m.awaiting, -1)
+					m.generateToken()
+				}
 			}
-		}()
-
-		return m.outChan, m.errorChan
-	}
+		}
+	}()
 
 	return nil
 }
+
+// attempts to acquire a new rate limit resource and sent it to the
+// token channel. If no resources are available, or there is an error
+// then we increment the needResource counter.
+// func tryAcquireResource(m *Manager) {
+// 	var r *Resource
+// 	var err error
+
+// 	defer func() {
+// 		if err != nil {
+// 			return
+// 		}
+
+// 		// If the acquired resource is not in the resource map, then add it
+// 		if _, ok := m.resources[r.Token]; !ok {
+// 			m.resources[r.Token] = r
+// 		}
+
+// 		// lock the resource
+// 		r.lock()
+
+// 		// send the resource to the "waiting" channel
+// 		m.waitResourceChan <- r
+// 	}()
+
+// 	// Try to get an existing available resource
+// 	r = m.getAvailableResource()
+
+// 	// If found, exit
+// 	if r != nil {
+// 		return
+// 	}
+
+// 	// Check to see if all resources are in use
+// 	if len(m.resources) > m.limit {
+// 		err = errors.New("all resources in use")
+// 		return
+// 	}
+
+// 	// We were unable to find an available resource, try to create a new one.
+// 	// Lock to prevent deadlock at the database level
+// 	r, err = NewResource(m)
+
+// 	if err != nil {
+// 		return
+// 	}
+
+// 	// All resources in use, increment the needResource counter
+// 	atomic.AddInt64(&m.needResource, 1)
+// }

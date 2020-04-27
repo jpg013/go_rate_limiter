@@ -34,6 +34,7 @@ func main() {
 		fmt.Printf("Worker %d Sleeping %d seconds...\n", id, n)
 		time.Sleep(time.Duration(n) * time.Second)
 		fmt.Printf("Worker %d Done\n", id)
+		rateLimiter.Release(token)
 		wg.Done()
 	}
 

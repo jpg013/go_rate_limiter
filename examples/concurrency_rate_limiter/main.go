@@ -6,11 +6,16 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jpg013/ratelimit"
+	"github.com/jpg013/ratelimiter"
 )
 
 func main() {
-	m, err := ratelimit.NewManager("crawlera")
+	conf := &ratelimiter.Config{
+		Type:           ratelimiter.ConcurrencyType,
+		MaxConcurrency: 1,
+	}
+
+	rateLimiter, err := ratelimiter.New(conf)
 
 	if err != nil {
 		panic(err)
@@ -21,26 +26,25 @@ func main() {
 
 	doWork := func(id int) {
 		// Acquire a rate limit token
-		token := m.Acquire()
+		token, err := rateLimiter.Acquire()
+		fmt.Printf("Rate Limit Token %s acquired at %s...\n", token.ID, time.Now())
+		if err != nil {
+			panic(err)
+		}
 		// Simulate some work
 		n := rand.Intn(5)
 		fmt.Printf("Worker %d Sleeping %d seconds...\n", id, n)
 		time.Sleep(time.Duration(n) * time.Second)
 		fmt.Printf("Worker %d Done\n", id)
-		// release the resource
-		m.Release(token)
+		rateLimiter.Release(token)
 		wg.Done()
 	}
 
-	// Spin up a 1000 workers that need a rate limit resource
-	for i := 0; i < 1000; i++ {
+	// Spin up a 10 workers that need a rate limit resource
+	for i := 0; i < 10; i++ {
 		wg.Add(1)
 		go doWork(i)
 	}
 
-	// Wait for all workers to finish
 	wg.Wait()
-
-	// Allow 1 second for all rate limits to release
-	time.Sleep(1 * time.Second)
 }

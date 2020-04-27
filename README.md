@@ -1,7 +1,7 @@
 ### Go Rate Limiter
 A rate limiting module powered by Golang and MySQL.
 
-`$ go get github.com/jpg013/ratelimit`
+`$ go get github.com/jpg013/ratelimiter`
 
 ```golang
 func main() {

@@ -10,11 +10,10 @@ import (
 )
 
 func main() {
-	conf := &ratelimiter.Config{
+	rateLimiter, err := ratelimiter.New(&ratelimiter.Config{
 		Throttle: 3 * time.Second,
-	}
-
-	rateLimiter, err := ratelimiter.New(conf)
+		Type:     ratelimiter.ThrottleType,
+	})
 
 	if err != nil {
 		panic(err)

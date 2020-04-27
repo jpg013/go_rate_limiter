@@ -10,9 +10,8 @@ package ratelimiter
 type Manager struct {
 	cancelChan chan struct{}
 	errorChan  chan error
-	// outChan      chan *Token
+	outChan    chan *Token
 	// activeTokens map[string]*Token
-	// lock         sync.Mutex
 	// limit int
 	await func() (<-chan *Token, <-chan error)
 }
@@ -21,6 +20,7 @@ func NewManager() (*Manager, error) {
 	m := &Manager{
 		cancelChan: make(chan struct{}),
 		errorChan:  make(chan error),
+		outChan:    make(chan *Token),
 		// activeTokens: make(map[string]*Token),
 	}
 

@@ -12,8 +12,7 @@ type RateLimiter interface {
 type RateLimiterType uint32
 
 const (
-	UndefinedRateLimiterType RateLimiterType = iota
-	ThrottleType
+	ThrottleType RateLimiterType = iota + 1
 	MaxConcurrencyType
 	IntervalWindowType
 )
@@ -25,7 +24,12 @@ func New(conf *Config) (RateLimiter, error) {
 		return m, err
 	}
 
-	err = withThrottle(m, conf)
+	switch conf.Type {
+	case ThrottleType:
+		err = withThrottle(m, conf)
+	default:
+		err = ErrInvalidLimiterType
+	}
 
 	if err != nil {
 		return nil, err
@@ -35,7 +39,9 @@ func New(conf *Config) (RateLimiter, error) {
 }
 
 type Config struct {
-	Throttle time.Duration
+	Type            RateLimiterType
+	Throttle        time.Duration
+	ConnectionLimit int
 }
 
 // func NewMaxConcurrencyRateLimiter(conf *Config) (RateLimiter, error) {
@@ -111,8 +117,10 @@ type Config struct {
 // }
 
 func withThrottle(m *Manager, conf *Config) error {
-	outChan := make(chan *Token)
-	errorChan := make(chan error)
+	if m.await != nil {
+		return ErrRateLimiterInitialized
+	}
+
 	throttler := make(chan struct{})
 
 	go func() {
@@ -130,38 +138,14 @@ func withThrottle(m *Manager, conf *Config) error {
 			t, err := NewToken()
 
 			if err != nil {
-				errorChan <- err
+				m.errorChan <- err
 			} else {
-				outChan <- t
+				m.outChan <- t
 			}
 		}()
 
-		return outChan, errorChan
+		return m.outChan, m.errorChan
 	}
 
 	return nil
 }
-
-// func main() {
-// 	rateLimiter, err := NewRateLimiter(&Config{
-// 		throttle: 3 * time.Second,
-// 	})
-
-// 	if err != nil {
-// 		panic(err)
-// 	}
-
-// 	for i := 0; i < 10; i++ {
-// 		go func() {
-// 			token, err := rateLimiter.Acquire()
-
-// 			if err != nil {
-// 				panic(err)
-// 			}
-
-// 			fmt.Println(token.id)
-// 		}()
-// 	}
-
-// 	time.Sleep(1 * time.Minute)
-// }

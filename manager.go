@@ -1,7 +1,6 @@
 package ratelimiter
 
 import (
-	"fmt"
 	"log"
 	"sync/atomic"
 )
@@ -55,8 +54,7 @@ func (m *Manager) Release(t *Token) error {
 
 func (m *Manager) generateToken() {
 	t, err := NewToken(m.config.ResetsIn)
-	fmt.Println(t)
-	fmt.Println(err)
+
 	if err != nil {
 		m.errorChan <- err
 	} else {
@@ -79,7 +77,7 @@ func (m *Manager) releaseToken(t *Token) {
 
 	// Delete from map
 	delete(m.activeTokens, t.ID)
-	fmt.Println("Removed token ", t.ID)
+
 	// Is anything waiting for a rate limit?
 	if atomic.LoadInt64(&m.awaiting) > 0 {
 		atomic.AddInt64(&m.awaiting, -1)

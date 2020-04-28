@@ -1,7 +1,6 @@
 package ratelimiter
 
 import (
-	"sync/atomic"
 	"time"
 )
 
@@ -26,7 +25,7 @@ type RateLimiterType uint32
 const (
 	ThrottleType RateLimiterType = iota + 1
 	ConcurrencyType
-	WindowType
+	WindowIntervalType
 )
 
 func New(conf *Config) (RateLimiter, error) {
@@ -41,6 +40,8 @@ func New(conf *Config) (RateLimiter, error) {
 		err = withThrottle(m)
 	case ConcurrencyType:
 		err = withMaxConcurrency(m)
+	case WindowIntervalType:
+		err = withWindowInterval(m)
 	default:
 		err = ErrInvalidLimiterType
 	}
@@ -50,23 +51,4 @@ func New(conf *Config) (RateLimiter, error) {
 	}
 
 	return m, err
-}
-
-func withWindowInterval(m *Manager, conf *Config) error {
-	go func() {
-		for {
-			select {
-			case <-m.inChan:
-				if !m.hasRemaining() {
-					atomic.AddInt64(&m.awaiting, 1)
-					continue
-				}
-				m.generateToken()
-			case t := <-m.releaseChan:
-				m.releaseToken(t)
-			}
-		}
-	}()
-
-	return nil
 }

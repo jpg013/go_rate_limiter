@@ -5,17 +5,14 @@ import (
 	"time"
 )
 
-func withMaxConcurrency(m *Manager) error {
+func withWindowInterval(m *Manager) error {
 	go func() {
-		ticker := time.NewTicker(time.Second * 10)
+		ticker := time.NewTicker(m.config.Throttle)
 
 		for {
 			<-ticker.C
-			now := time.Now().UTC()
 			for _, token := range m.activeTokens {
-				if token.ExpiresAt.Before(now) {
-					m.Release(token)
-				}
+				m.releaseToken(token)
 			}
 		}
 	}()

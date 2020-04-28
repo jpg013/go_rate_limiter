@@ -10,13 +10,11 @@ import (
 )
 
 func main() {
-	conf := &ratelimiter.Config{
-		Type:     ratelimiter.ConcurrencyType,
-		Limit:    3,
-		ResetsIn: time.Second * 10,
-	}
-
-	rateLimiter, err := ratelimiter.New(conf)
+	rateLimiter, err := ratelimiter.New(&ratelimiter.Config{
+		Throttle: 15 * time.Second,
+		Limit:    5,
+		Type:     ratelimiter.WindowIntervalType,
+	})
 
 	if err != nil {
 		panic(err)
@@ -28,7 +26,7 @@ func main() {
 	doWork := func(id int) {
 		// Acquire a rate limit token
 		token, err := rateLimiter.Acquire()
-		fmt.Printf("Rate Limit Token %s acquired at %s...\n", token.ID, time.Now())
+		fmt.Printf("Rate Limit Token acquired %s...\n", token.ID)
 		if err != nil {
 			panic(err)
 		}
@@ -48,6 +46,4 @@ func main() {
 	}
 
 	wg.Wait()
-
-	time.Sleep(100 * time.Second)
 }

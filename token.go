@@ -1,13 +1,21 @@
 package ratelimiter
 
-import "github.com/segmentio/ksuid"
+import (
+	"time"
+
+	"github.com/segmentio/ksuid"
+)
 
 type Token struct {
-	ID string
+	ID        string
+	ExpiresAt time.Time
+	CreatedAt time.Time
 }
 
-func NewToken() (*Token, error) {
+func NewToken(resetsIn time.Duration) (*Token, error) {
 	return &Token{
-		ID: ksuid.New().String(),
+		ID:        ksuid.New().String(),
+		CreatedAt: time.Now().UTC(),
+		ExpiresAt: time.Now().UTC().Add(resetsIn),
 	}, nil
 }

@@ -11,8 +11,9 @@ import (
 
 func main() {
 	conf := &ratelimiter.Config{
-		Type:           ratelimiter.ConcurrencyType,
-		MaxConcurrency: 1,
+		Type:     ratelimiter.ConcurrencyType,
+		Limit:    1,
+		ResetsIn: time.Second * 10,
 	}
 
 	rateLimiter, err := ratelimiter.New(conf)
@@ -47,4 +48,6 @@ func main() {
 	}
 
 	wg.Wait()
+
+	time.Sleep(100 * time.Second)
 }

@@ -1,6 +1,10 @@
 package ratelimiter
 
-import "sync"
+import (
+	"fmt"
+	"log"
+	"sync/atomic"
+)
 
 type Manager struct {
 	errorChan    chan error
@@ -8,11 +12,11 @@ type Manager struct {
 	inChan       chan struct{}
 	releaseChan  chan *Token
 	awaiting     int64
-	lock         sync.Mutex
 	activeTokens map[string]*Token
+	config       *Config
 }
 
-func NewManager() (*Manager, error) {
+func NewManager(conf *Config) (*Manager, error) {
 	m := &Manager{
 		errorChan:    make(chan error),
 		outChan:      make(chan *Token),
@@ -20,6 +24,7 @@ func NewManager() (*Manager, error) {
 		inChan:       make(chan struct{}),
 		activeTokens: make(map[string]*Token),
 		awaiting:     0,
+		config:       conf,
 	}
 
 	return m, nil
@@ -45,23 +50,13 @@ func (m *Manager) Release(t *Token) error {
 		m.releaseChan <- t
 	}()
 
-	// _, ok := m.tokensInUse[t]
-
-	// if !ok {
-	// 	return fmt.Errorf("unable to relase token %s - not in use", t)
-	// }
-
-	// delete(m.tokensInUse, t)
-
-	// Call to process next needed resource
-	// needNextRateLimit(m)
-
 	return nil
 }
 
 func (m *Manager) generateToken() {
-	t, err := NewToken()
-
+	t, err := NewToken(m.config.ResetsIn)
+	fmt.Println(t)
+	fmt.Println(err)
 	if err != nil {
 		m.errorChan <- err
 	} else {
@@ -69,4 +64,37 @@ func (m *Manager) generateToken() {
 		m.activeTokens[t.ID] = t
 		m.outChan <- t
 	}
+}
+
+func (m *Manager) releaseToken(t *Token) {
+	if t == nil {
+		log.Print("unable to relase nil token")
+		return
+	}
+
+	if _, ok := m.activeTokens[t.ID]; !ok {
+		log.Printf("unable to relase token %s - not in use", t)
+		return
+	}
+
+	// Delete from map
+	delete(m.activeTokens, t.ID)
+	fmt.Println("Removed token ", t.ID)
+	// Is anything waiting for a rate limit?
+	if atomic.LoadInt64(&m.awaiting) > 0 {
+		atomic.AddInt64(&m.awaiting, -1)
+		m.generateToken()
+	}
+}
+
+func (m *Manager) hasRemaining() bool {
+	if atomic.LoadInt64(&m.awaiting) > 0 {
+		return false
+	}
+
+	if len(m.activeTokens) >= m.config.Limit {
+		return false
+	}
+
+	return true
 }

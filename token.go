@@ -8,14 +8,21 @@ import (
 
 type Token struct {
 	ID        string
-	ExpiresAt time.Time
 	CreatedAt time.Time
+	// Minimum amount of time the rate limit is alive before being released
+	ExpiresAt time.Time
 }
 
-func NewToken(resetsIn time.Duration) (*Token, error) {
+func NewToken(expiresAt time.Time) (*Token, error) {
 	return &Token{
 		ID:        ksuid.New().String(),
 		CreatedAt: time.Now().UTC(),
-		ExpiresAt: time.Now().UTC().Add(resetsIn),
+		ExpiresAt: expiresAt,
 	}, nil
+}
+
+func (t *Token) IsExpired() bool {
+	now := time.Now().UTC()
+
+	return t.ExpiresAt.Before(now)
 }

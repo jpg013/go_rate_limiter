@@ -7,8 +7,9 @@ import (
 )
 
 func main() {
-	r, err := ratelimiter.NewThrottleRateLimiter(&ratelimiter.Config{
-		Throttle: 1 * time.Second,
+	r, err := ratelimiter.NewFixedWindowRateLimiter(&ratelimiter.Config{
+		Limit:    5,
+		Interval: 15 * time.Second,
 	})
 
 	if err != nil {

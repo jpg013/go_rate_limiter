@@ -4,7 +4,6 @@ import "errors"
 
 // Errors used throughout the codebase
 var (
-	ErrInvalidLimiterType     = errors.New("Invalid Limiter Type")
-	ErrNotInitialized         = errors.New("Rate Limiter is not  initialized")
-	ErrRateLimiterInitialized = errors.New("rate limiter already initialized")
+	ErrLimitGreaterThanZero    = errors.New("Limit must be greater than zero")
+	ErrIntervalGreaterThanZero = errors.New("Interval must be greater than zero")
 )

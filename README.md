@@ -1,33 +1,45 @@
 ### Go Rate Limiter
-A rate limiting module powered by Golang and MySQL.
+
+Rate limiting in Golang
 
 `$ go get github.com/jpg013/ratelimiter`
 
+Throttle Rate Limiter
 ```golang
 func main() {
-	m, err := ratelimit.NewManager("crawlera")
+	r, err := ratelimiter.NewThrottleRateLimiter(&ratelimiter.Config{
+		Throttle: 1 * time.Second,
+	})
 
 	if err != nil {
 		panic(err)
 	}
 
+	doWork(r, 10)
+}
+
+func doWork(r RateLimiter, workerCount int) {
 	var wg sync.WaitGroup
 	rand.Seed(time.Now().UnixNano())
 
 	doWork := func(id int) {
-    		// Acquire a resource token
-    		token := m.Acquire()
-    		// Simulate some work for some random time 
-    		n := rand.Intn(5)
+		// Acquire a rate limit token
+		token, err := r.Acquire()
+		fmt.Printf("Rate Limit Token acquired %s...\n", token.ID)
+		if err != nil {
+			panic(err)
+		}
+		// Simulate some work
+		n := rand.Intn(5)
 		fmt.Printf("Worker %d Sleeping %d seconds...\n", id, n)
 		time.Sleep(time.Duration(n) * time.Second)
 		fmt.Printf("Worker %d Done\n", id)
-		// always release the resource token
-		m.Release(token)
+		r.Release(token)
 		wg.Done()
 	}
 
-	for i := 0; i < 1000; i++ {
+	// Spin up a 10 workers that need a rate limit resource
+	for i := 0; i < workerCount; i++ {
 		wg.Add(1)
 		go doWork(i)
 	}

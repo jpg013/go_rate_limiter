@@ -14,7 +14,7 @@ func DoWork(r RateLimiter, workerCount int) {
 	doWork := func(id int) {
 		// Acquire a rate limit token
 		token, err := r.Acquire()
-		fmt.Printf("Rate Limit Token acquired %s...\n", token.ID)
+		fmt.Printf("Rate Limit Token %s acquired at %s...\n", token.ID, time.Now().UTC())
 		if err != nil {
 			panic(err)
 		}
@@ -23,7 +23,7 @@ func DoWork(r RateLimiter, workerCount int) {
 		fmt.Printf("Worker %d Sleeping %d seconds...\n", id, n)
 		time.Sleep(time.Duration(n) * time.Second)
 		fmt.Printf("Worker %d Done\n", id)
-		r.Release(token)
+		// r.Release(token)
 		wg.Done()
 	}
 

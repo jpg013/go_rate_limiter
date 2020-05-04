@@ -7,14 +7,13 @@ import (
 )
 
 func main() {
-	r, err := ratelimiter.NewFixedWindowRateLimiter(&ratelimiter.Config{
-		Limit:         5,
-		FixedInterval: 15 * time.Second,
+	r, err := ratelimiter.NewMaxConcurrencyRateLimiter(&ratelimiter.Config{
+		Limit:           4,
+		TokenResetAfter: 10 * time.Second,
 	})
 
 	if err != nil {
 		panic(err)
 	}
-
 	ratelimiter.DoWork(r, 10)
 }

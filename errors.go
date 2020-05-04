@@ -4,6 +4,7 @@ import "errors"
 
 // Errors used throughout the codebase
 var (
-	ErrLimitGreaterThanZero    = errors.New("Limit must be greater than zero")
-	ErrIntervalGreaterThanZero = errors.New("Interval must be greater than zero")
+	ErrInvalidLimit           = errors.New("Limit must be greater than zero")
+	ErrInvalidInterval        = errors.New("Interval must be greater than zero")
+	ErrTokenFactoryNotDefined = errors.New("Token factory must be defined")
 )

@@ -15,5 +15,6 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+
 	ratelimiter.DoWork(r, 10)
 }

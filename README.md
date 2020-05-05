@@ -1,6 +1,6 @@
 ### Go Rate Limiter
 
-Rate limiting in Golang
+Rate limiting examples in Golang.
 
 `$ go get github.com/jpg013/ratelimiter`
 
@@ -45,5 +45,37 @@ func doWork(r RateLimiter, workerCount int) {
 	}
 
 	wg.Wait()
+}
+```
+
+Max Concurrency Rate Limiter
+```golang
+func main() {
+	r, err := ratelimiter.NewMaxConcurrencyRateLimiter(&ratelimiter.Config{
+		Limit:            4,
+		TokenResetsAfter: 10 * time.Second,
+	})
+
+	if err != nil {
+		panic(err)
+	}
+
+	doWork(r, 10)
+}
+```
+
+Fixed Window Rate Limiter
+```golang
+func main() {
+	r, err := ratelimiter.NewFixedWindowRateLimiter(&ratelimiter.Config{
+		Limit:         5,
+		FixedInterval: 15 * time.Second,
+	})
+
+	if err != nil {
+		panic(err)
+	}
+
+	doWork(r, 10)
 }
 ```

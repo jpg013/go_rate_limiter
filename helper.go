@@ -23,7 +23,7 @@ func DoWork(r RateLimiter, workerCount int) {
 		fmt.Printf("Worker %d Sleeping %d seconds...\n", id, n)
 		time.Sleep(time.Duration(n) * time.Second)
 		fmt.Printf("Worker %d Done\n", id)
-		// r.Release(token)
+		r.Release(token)
 		wg.Done()
 	}
 

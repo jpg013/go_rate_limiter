@@ -12,8 +12,7 @@ const MaxUint = ^uint(0)
 // MaxInt holds the maximum int value
 const MaxInt = int(MaxUint >> 1)
 
-// Manager implements a rate limiter interface. Internally it contains
-// the in / out / release channels and the current rate limiter state.
+// Manager implements a rate limiter interface.
 type Manager struct {
 	errorChan    chan error
 	releaseChan  chan *Token
@@ -25,7 +24,31 @@ type Manager struct {
 	makeToken    tokenFactory
 }
 
-// NewManager returns a manager instance
+// Acquire is called to acquire a new token
+func (m *Manager) Acquire() (*Token, error) {
+	go func() {
+		m.inChan <- struct{}{}
+	}()
+
+	// Await rate limit token
+	select {
+	case t := <-m.outChan:
+		return t, nil
+	case err := <-m.errorChan:
+		return nil, err
+	}
+}
+
+// Release is called to release an active token
+func (m *Manager) Release(t *Token) {
+	if t.IsExpired() {
+		go func() {
+			m.releaseChan <- t
+		}()
+	}
+}
+
+// NewManager creates a manager type
 func NewManager(conf *Config) *Manager {
 	m := &Manager{
 		errorChan:    make(chan error),
@@ -35,7 +58,7 @@ func NewManager(conf *Config) *Manager {
 		releaseChan:  make(chan *Token),
 		needToken:    0,
 		limit:        conf.Limit,
-		makeToken:    NewToken, // default token factory
+		makeToken:    NewToken,
 	}
 
 	// If limit is not defined, then default to max value
@@ -43,17 +66,12 @@ func NewManager(conf *Config) *Manager {
 		m.limit = MaxInt
 	}
 
-	// If the config TokenResetAfter value exists, then run the
-	// reset task
-	if conf.TokenResetAfter > 0 {
-		m.runResetTokenTask(conf.TokenResetAfter)
+	// If the config TokenResetsAfter value exists, then run the reset task
+	if conf.TokenResetsAfter > 0 {
+		m.runResetTokenTask(conf.TokenResetsAfter)
 	}
 
 	return m
-}
-
-func defaultExpire() time.Time {
-	return time.Time{}
 }
 
 func (m *Manager) incNeedToken() {
@@ -69,7 +87,7 @@ func (m *Manager) awaitingToken() bool {
 }
 
 func (m *Manager) tryGenerateToken() {
-	// panie if token factory is not defined
+	// panic if token factory is not defined
 	if m.makeToken == nil {
 		panic(ErrTokenFactoryNotDefined)
 	}
@@ -124,30 +142,6 @@ func (m *Manager) releaseToken(token *Token) {
 	}
 }
 
-// Release is exposed to release an active token
-func (m *Manager) Release(t *Token) {
-	if t.IsExpired() {
-		go func() {
-			m.releaseChan <- t
-		}()
-	}
-}
-
-// Acquire is exposed to acquire a new token
-func (m *Manager) Acquire() (*Token, error) {
-	go func() {
-		m.inChan <- struct{}{}
-	}()
-
-	// Await rate limit token
-	select {
-	case t := <-m.outChan:
-		return t, nil
-	case err := <-m.errorChan:
-		return nil, err
-	}
-}
-
 // loops over active tokens and releases any that are expired
 func (m *Manager) releaseExpiredTokens() {
 	for _, token := range m.activeTokens {
@@ -159,8 +153,8 @@ func (m *Manager) releaseExpiredTokens() {
 	}
 }
 
-// reset task that runs once per provided duration and releases and tokens
-// that need to be reset
+// reset task that runs once per provided duration and releases
+// and tokens that need to be reset
 func (m *Manager) runResetTokenTask(resetAfter time.Duration) {
 	go func() {
 		ticker := time.NewTicker(resetAfter)

@@ -8,8 +8,8 @@ import (
 
 func main() {
 	r, err := ratelimiter.NewMaxConcurrencyRateLimiter(&ratelimiter.Config{
-		Limit:           4,
-		TokenResetAfter: 10 * time.Second,
+		Limit:            4,
+		TokenResetsAfter: 10 * time.Second,
 	})
 
 	if err != nil {

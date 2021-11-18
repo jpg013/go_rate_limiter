@@ -1,4 +1,4 @@
-module github.com/jpg013/ratelimiter
+module github.com/jpg013/go_rate_limiter
 
 go 1.13
 
